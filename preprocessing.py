@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import pretty_midi
 import tempfile
-from music21 import key, pitch, interval, converter, note
+from music21 import key, pitch, interval, converter, roman, note
+import os
 
 
 def midi_to_notes(midi_input) -> pd.DataFrame:
@@ -35,7 +36,7 @@ def midi_to_notes(midi_input) -> pd.DataFrame:
     # Convert the notes data to a DataFrame
     return pd.DataFrame({name: np.array(value) for name, value in notes.items()})
 
-def notes_to_midi(notes: pd.DataFrame, out_file: str, instrument_name: str,velocity: int = 80, ) -> pretty_midi.PrettyMIDI:
+def notes_to_midi(notes: pd.DataFrame, out_file:str, instrument_name: str,velocity: int = 80, ) -> pretty_midi.PrettyMIDI:
 
   pm = pretty_midi.PrettyMIDI()
   instrument = pretty_midi.Instrument(
@@ -53,9 +54,9 @@ def notes_to_midi(notes: pd.DataFrame, out_file: str, instrument_name: str,veloc
     )
     instrument.notes.append(note)
     prev_start = start
-
+  
   pm.instruments.append(instrument)
-  pm.write(out_file)
+  pm.write(out_file)   
   return pm
 
 def plot_piano_roll(midi_data, start_pitch, end_pitch, fs=100, time_span=10):
@@ -85,69 +86,57 @@ def plot_piano_roll(midi_data, start_pitch, end_pitch, fs=100, time_span=10):
     plt.tight_layout()
     return fig
 
-def format_chord(chord_obj):
-    root = chord_obj.root() # Get the root note's name
-
-    # Determine the quality abbreviation, with a default of 'other'
+def format_chord(chord_obj, key):
+    root = chord_obj.root()  # Get the root note's name
     quality = chord_obj.quality
     chord_name = f"{root.name} {quality}"
 
     inversion_index = chord_obj.inversion()
-    inversion_names = ["", "1st", "2nd", "3rd"]  # Shorthand for inversions, empty string for root position
+    inversion_names = ["", "1st", "2nd", "3rd"]
     inversion_name = inversion_names[inversion_index] if inversion_index < len(inversion_names) else f"{inversion_index}th inversion"
 
-    # Combine all parts without unnecessary hyphens
-    #chord_name = f"{root} {quality}" if quality and quality != 'other' else root
-    formatted_chord = f"{chord_name} {inversion_name}".strip()
+    # Get Roman numeral representation
+    roman_chord = roman.romanNumeralFromChord(chord_obj, key)
+    roman_numeral = roman_chord.figure
+
+    formatted_chord = f"{roman_numeral} - {chord_name} {inversion_name}".strip()
 
     return formatted_chord
 
-
-
 def transpose_to_input_key(generated_midi, input_midi):
-    # Write the input PrettyMIDI object to a temporary MIDI file to analyze the key
     with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.mid') as temp_midi_file:
         input_midi.write(temp_midi_file.name)
         temp_midi_file.seek(0)
-        # Parse the MIDI file with music21 for key analysis
         input_midi_stream = converter.parse(temp_midi_file.name)
-        # Extract the key from the input MIDI
         input_key = input_midi_stream.analyze('key')
         print(f"Input Key: {input_key}")
 
-    # Write the generated PrettyMIDI object to a temporary MIDI file to transpose
     with tempfile.NamedTemporaryFile('w+', delete=False, suffix='.mid') as temp_midi_file:
         generated_midi.write(temp_midi_file.name)
         temp_midi_file.seek(0)
-        # Parse the MIDI file with music21 for transposition
         generated_midi_stream = converter.parse(temp_midi_file.name)
         generated_key = generated_midi_stream.analyze('key')
         print(f"Generated Key: {generated_key}")
 
-        # Decide whether to use the relative major or minor if necessary
-        if input_key.mode != generated_key.mode:
-            if input_key.mode == 'major':
-                generated_key = key.Key(generated_key.tonic.name, 'major')
-            elif input_key.mode == 'minor':
-                generated_key = key.Key(generated_key.tonic.name, 'minor')
-
-        # Calculate the interval for transposition
-        transposition_interval = interval.Interval(generated_key.tonic, input_key.tonic)
-        print(f"Transposing by interval: {transposition_interval}")
-
-        # Calculate the interval for transposition in semitones
-        input_pitch = pitch.Pitch(input_key.tonic.nameWithOctave)
-        generated_pitch = pitch.Pitch(generated_key.tonic.nameWithOctave)
-        transposition_interval_semitones = input_pitch.midi - generated_pitch.midi
-        transposition_interval = interval.ChromaticInterval(transposition_interval_semitones)
-        print(f"Transposing by semitones: {transposition_interval_semitones}")
-        
-        # Transpose the generated MIDI stream
-        transposed_stream = generated_midi_stream.transpose(transposition_interval)
-        # Write the transposed stream back to the temporary file
-        transposed_stream.write('midi', temp_midi_file.name)
-        # Read the transposed MIDI file with PrettyMIDI
+        # If the generated key is different from the input key, adjust the generated key
+        if generated_key.tonic.name != input_key.tonic.name or generated_key.mode != input_key.mode:
+            # Create the correct key based on the input
+            correct_key = key.Key(input_key.tonic.name, input_key.mode)
+            
+            # Calculate the interval for transposition
+            transposition_interval = interval.Interval(noteStart=generated_key.tonic, noteEnd=correct_key.tonic)
+            
+            # Transpose the generated MIDI stream to the correct key
+            transposed_stream = generated_midi_stream.transpose(transposition_interval)
+            
+            # Write the transposed stream back to the temporary file
+            transposed_stream.write('midi', temp_midi_file.name)
+            
+        # Read the possibly transposed MIDI file with PrettyMIDI
         transposed_pretty_midi = pretty_midi.PrettyMIDI(temp_midi_file.name)
+        
+    # Cleanup
+    os.remove(temp_midi_file.name)
 
     return transposed_pretty_midi
 
@@ -171,9 +160,8 @@ def predict_next_note(notes: np.ndarray, model: tf.keras.Model, temperature, seq
 
     # Get predictions from the model
     predictions = model.predict(inputs)
-    pitch_logits = predictions['pitch']
-    st_time = predictions['st_time']
-    duration = predictions['duration']
+    # Assuming the model returns pitch, st_time, and duration in this order
+    pitch_logits, st_time, duration = predictions[0], predictions[1], predictions[2]
 
     # Apply temperature scaling to pitch logits and get the predicted pitch
     pitch_logits /= temperature
@@ -206,6 +194,6 @@ def mse_with_positive_pressure(y_true: tf.Tensor, y_pred: tf.Tensor):
     return tf.reduce_mean(mse + positive_pressure)
   
 def load_model():
-    model = tf.keras.models.load_model('hybrid_model.h5', custom_objects={'mse_with_positive_pressure': mse_with_positive_pressure})
+    model = tf.keras.models.load_model('music_model.h5', custom_objects={'mse_with_positive_pressure': mse_with_positive_pressure})
     return model
 

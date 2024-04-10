@@ -8,7 +8,7 @@ from preprocessing import midi_to_notes, format_chord, notes_to_midi,predict_nex
 vocab_size = 128
 seq_length = 25
 key_order = ['pitch', 'st_time', 'duration']
-temperature = 2.0
+temperature = 1.0
 num_predictions = 120
 
 def extract_key_and_chords(pretty_midi_data):
@@ -23,16 +23,10 @@ def extract_key_and_chords(pretty_midi_data):
     chords = [notes for notes in notes_at_ticks.values() if len(notes) > 1]
     chord_objects = [chord.Chord(notes) for notes in chords]
 
-    # Format the chords into a readable format
-    formatted_chords = [format_chord(chord_obj) for chord_obj in chord_objects]
-
-    # Only take the first 20 chords
-    formatted_chords = formatted_chords[:20]
-
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mid")
     temp_midi_path = temp_file.name
     temp_file.close()
-    
+
     try:
         pretty_midi_data.write(temp_midi_path)
         midi_stream = converter.parse(temp_midi_path)
@@ -40,7 +34,25 @@ def extract_key_and_chords(pretty_midi_data):
     finally:
         os.remove(temp_midi_path)
 
-    return formatted_chords, midi_key
+    # Format the chords into a readable format, now passing the key for Roman numeral analysis
+    #formatted_chords = [format_chord(chord_obj, midi_key) for chord_obj in chord_objects[:20]]
+    
+    # Use a DataFrame to structure the formatted chords
+    chords_data = []
+    for chord_obj in chord_objects[:20]:
+        formatted_chord = format_chord(chord_obj, midi_key)
+        roman_numeral, rest_of_chord = formatted_chord.split(' - ', 1)
+        chord_name, inversion_name = rest_of_chord.rsplit(' ', 1)
+        chords_data.append({
+            'Roman Numeral': roman_numeral,
+            'Chord Name': chord_name,
+            'Inversion': inversion_name
+        })
+    
+    chords_df = pd.DataFrame(chords_data)
+    
+    # Return the DataFrame along with the key
+    return chords_df, midi_key
 
 def generate_notes_sequence(input_notes, num_predictions=120):
     """
@@ -80,6 +92,6 @@ def generate_melody(midi_data):
     # Analyze the key of the input MIDI
     input_notes = midi_to_notes(midi_data)
     generated_notes = generate_notes_sequence(input_notes)
-    generated_midi_data = notes_to_midi(generated_notes, "generated.mid", "Acoustic Grand Piano")
+    generated_midi_data = notes_to_midi(generated_notes,"generated.mid" ,"Acoustic Grand Piano")
     generated_melody = transpose_to_input_key(generated_midi_data, midi_data)
     return generated_melody

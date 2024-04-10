@@ -44,19 +44,19 @@ def main():
         with col1:
             st.subheader("Input MIDI Piano Roll")
             fig_input = plot_piano_roll(input_midi, 21, 108)
-            st.pyplot(fig_input)
+            st.pyplot(fig_input)          
             
+            with st.sidebar:
+                st.info('Extracting chords and keys...')
+                
             # Display Roman numeral chords and keys
-            st.markdown("Input Chords and Keys:", unsafe_allow_html=True)
-            input_chords, input_key = extract_key_and_chords(input_midi)
-            
-            # Display the generated key
+            input_chords_df, input_key = extract_key_and_chords(input_midi)
             st.write("Input Key:", input_key.tonic.name, input_key.mode)
-
-            # Display the generated chords as separate lines of text
             st.write("Input Chords:")
-            for chord in input_chords:
-                st.text(chord)
+            st.table(input_chords_df.assign(hack='').set_index('hack'))
+            
+            with st.sidebar:
+                st.success('Chords and keys extraction complete.')
         
         with col2:
             st.subheader("Output MIDI Piano Roll")
@@ -65,26 +65,30 @@ def main():
                 fig_output = plot_piano_roll(generated_midi_data, 21, 108)
                 st.pyplot(fig_output)
                 
+                with st.sidebar:
+                    st.info('Extracting chords and keys...')
+                    
                 # Display Roman numeral chords and keys
-                st.write("Generated Chords and Keys:")
-                generated_chords, generated_key = extract_key_and_chords(generated_midi_data)
-                
-                # Display the generated key
+                generated_chords_df, generated_key = extract_key_and_chords(generated_midi_data)
                 st.write("Generated Key:", generated_key.tonic.name, generated_key.mode)
-                
-                # Display the generated chords as separate lines of text
                 st.write("Generated Chords:")
-                for chord in generated_chords:
-                    st.text(chord)
+                st.table(generated_chords_df.assign(hack='').set_index('hack'))
                 
-
+                with st.sidebar:
+                    st.success('Chords and keys extraction complete.')
     else:
         st.error("Please upload an input MIDI file or choose a sample to proceed.")
 
     if st.button("Generate Melody"):
         if input_midi:
+            with st.sidebar:
+                st.info('Generating melody, please wait...')
+                
             generated_midi_data = generate_melody(input_midi)
             st.session_state['generated_midi_data'] = generated_midi_data
+            
+            with st.sidebar:
+                st.success('Melody generation complete.')
             st.rerun()
 
 if __name__ == "__main__":
